@@ -104,20 +104,23 @@ def train_classification_model(data):
     """Trains a classification model to predict price direction."""
     if data.empty:
         st.warning("No data available to train the model.")
-        return None, None
+        return None, None, None, None, None, None, None
 
     # Define features (X) and target (y) for classification
     features_classification = data.drop(['Open', 'High', 'Low', 'Close', 'Volume', 'Target', 'Price_Direction'], axis=1)
     target_classification = data['Price_Direction']
 
     # Use the last row for prediction, the rest for training
+    # Ensure there's enough data for both training and prediction
+    if len(features_classification) < 2:
+         st.warning("Not enough data to train the model and make a prediction.")
+         return None, None, None, None, None, None, None
+
+
     X_train_classification = features_classification.iloc[:-1]
     y_train_classification = target_classification.iloc[:-1]
     X_latest = features_classification.iloc[-1:] # Features for the latest day
-
-    if X_train_classification.empty or y_train_classification.empty:
-         st.warning("Not enough data to train the model.")
-         return None, X_latest
+    y_latest_actual = target_classification.iloc[-1:] # Actual direction for the latest day (for evaluation)
 
 
     # Initialize and train the Random Forest Classifier model
@@ -126,9 +129,19 @@ def train_classification_model(data):
 
     st.write("✅ Classification Model training complete.")
 
-    return model_classification, X_latest
+    # Evaluate the model on the training data (optional, but good for debugging)
+    y_train_pred = model_classification.predict(X_train_classification)
+    train_accuracy = accuracy_score(y_train_classification, y_train_pred)
 
-def make_prediction(model, X_latest):
+    # Evaluate the model on the latest available data point
+    y_latest_pred = model_classification.predict(X_latest)
+    latest_accuracy = accuracy_score(y_latest_actual, y_latest_pred)
+
+
+    return model_classification, X_latest, train_accuracy, latest_accuracy, y_latest_actual.iloc[0], y_latest_pred[0], model_classification.classes_.tolist()
+
+
+def make_prediction(model, X_latest, model_classes):
     """Makes a prediction and gets confidence score for the latest data."""
     if model is None or X_latest.empty:
         st.warning("Model not trained or no data for prediction.")
@@ -141,12 +154,14 @@ def make_prediction(model, X_latest):
     y_prob_classification = model.predict_proba(X_latest)
 
     # Get confidence score for the predicted class
-    predicted_class_index = model.classes_.tolist().index(predicted_direction)
+    # Find the index of the predicted_direction in the model's classes
+    predicted_class_index = model_classes.index(predicted_direction)
     confidence_score = y_prob_classification[0, predicted_class_index]
 
     st.write(f"🔮 Prediction made: {predicted_direction} with confidence {confidence_score:.2f}")
 
     return predicted_direction, confidence_score, X_latest.index[0] # Return the date of the prediction
+
 
 def store_prediction(prediction_date, predicted_direction, confidence_score):
     """Stores the prediction in a CSV file."""
@@ -160,7 +175,12 @@ def store_prediction(prediction_date, predicted_direction, confidence_score):
         predictions_df.index = pd.to_datetime(predictions_df.index)
 
         # Add the new prediction
-        if prediction_date not in predictions_df.index:
+        # Check if a prediction for this date already exists
+        if prediction_date in predictions_df.index:
+             # Update existing prediction if needed (e.g., if you want to overwrite)
+             # For now, let's assume we don't overwrite and just log that it exists
+             st.write(f"Prediction for {prediction_date.date()} already exists. Skipping storage of new prediction.")
+        else:
             new_prediction = pd.DataFrame([{
                 'Predicted_Direction': predicted_direction,
                 'Confidence_Score': confidence_score,
@@ -170,8 +190,6 @@ def store_prediction(prediction_date, predicted_direction, confidence_score):
             predictions_df.sort_index(inplace=True)
             predictions_df.to_csv(PREDICTIONS_FILE)
             st.write(f"Prediction for {prediction_date.date()} stored.")
-        else:
-            st.write(f"Prediction for {prediction_date.date()} already exists.")
 
     except Exception as e:
         st.error(f"An error occurred while storing the prediction: {e}")
@@ -189,8 +207,8 @@ def update_actual_outcomes(data):
         predictions_df.index = pd.to_datetime(predictions_df.index)
         data.index = pd.to_datetime(data.index)
 
-        # Iterate through predictions and find corresponding actual outcomes in data
         updated_count = 0
+        # Iterate through predictions and find corresponding actual outcomes in data
         for index, row in predictions_df.iterrows():
             if pd.isna(row['Actual_Outcome']): # Only update if actual outcome is missing
                 # The actual outcome for a prediction made on date X is the direction on date X+1
@@ -204,8 +222,11 @@ def update_actual_outcomes(data):
             predictions_df.to_csv(PREDICTIONS_FILE)
             st.write(f"Updated {updated_count} historical prediction outcomes.")
 
+        return predictions_df # Return updated predictions dataframe
+
     except Exception as e:
         st.error(f"An error occurred while updating actual outcomes: {e}")
+        return pd.DataFrame()
 
 
 # --- Streamlit App ---
@@ -222,42 +243,55 @@ if st.button("Run Analysis and Get Prediction"):
 
     if not combined_data.empty:
         # 2. Update Actual Outcomes for past predictions
-        update_actual_outcomes(combined_data)
+        historical_predictions_df = update_actual_outcomes(combined_data) # Capture the updated predictions
 
         # 3. Train Classification Model and get latest features
-        model_classification, X_latest = train_classification_model(combined_data)
+        model_classification, X_latest, train_accuracy, latest_accuracy, latest_actual_direction, latest_predicted_direction, model_classes = train_classification_model(combined_data)
 
-        # 4. Make Prediction
-        predicted_direction, confidence_score, prediction_date = make_prediction(model_classification, X_latest)
+        if model_classification is not None and not X_latest.empty:
+            # 4. Make Prediction for the next day (using the trained model on the latest data)
+            # Note: The prediction date will be X_latest.index[0] + timedelta(days=1)
+            # The make_prediction function currently returns the date of X_latest, which is the date the prediction is *based on*.
+            # Let's adjust make_prediction or how we call it to reflect the *predicted* date.
+            # For simplicity, let's assume the prediction is for the day after the latest data point.
 
-        if predicted_direction is not None:
-            st.subheader("Next Day Price Direction Prediction:")
-            st.write(f"**Predicted Direction:** {predicted_direction}")
-            st.write(f"**Confidence Score:** {confidence_score:.2f}")
+            predicted_direction_tomorrow, confidence_score_tomorrow, date_of_latest_data = make_prediction(model_classification, X_latest, model_classes)
+            predicted_date = date_of_latest_data + timedelta(days=1) # The date the prediction is for
 
-            # 5. Store the new prediction
-            store_prediction(prediction_date, predicted_direction, confidence_score)
+            if predicted_direction_tomorrow is not None:
+                st.subheader(f"Prediction for {predicted_date.date()}:")
+                st.write(f"**Predicted Direction:** {predicted_direction_tomorrow}")
+                st.write(f"**Confidence Score:** {confidence_score_tomorrow:.2f}")
+
+                # 5. Store the new prediction
+                store_prediction(predicted_date, predicted_direction_tomorrow, confidence_score_tomorrow)
+
+            # Display model evaluation metrics on the latest data point
+            st.subheader(f"Model Performance on Latest Data ({date_of_latest_data.date()}):")
+            st.write(f"Actual Direction: {latest_actual_direction}")
+            st.write(f"Predicted Direction: {latest_predicted_direction}")
+            st.write(f"Accuracy on latest data: {latest_accuracy:.2f}")
+            st.write(f"Accuracy on training data: {train_accuracy:.2f}") # Display training accuracy as a reference
+
+            # Display historical predictions and outcomes (using the updated dataframe)
+            st.subheader("Historical Predictions and Outcomes:")
+            if not historical_predictions_df.empty:
+                 # Calculate accuracy of historical predictions with known outcomes
+                evaluated_predictions = historical_predictions_df.dropna(subset=['Actual_Outcome'])
+                if not evaluated_predictions.empty:
+                    historical_accuracy = accuracy_score(evaluated_predictions['Actual_Outcome'], evaluated_predictions['Predicted_Direction'])
+                    st.write(f"Historical Prediction Accuracy (evaluated outcomes): {historical_accuracy:.2f}")
+
+                st.dataframe(historical_predictions_df.sort_index(ascending=False))
+            else:
+                st.write("No historical predictions found.")
+
 
     else:
         st.error("Could not load or prepare data. Please check the logs.")
 
 
-st.subheader("Historical Predictions and Outcomes:")
-if os.path.exists(PREDICTIONS_FILE):
-    historical_predictions_df = pd.read_csv(PREDICTIONS_FILE, index_col='Date', parse_dates=True)
-    if not historical_predictions_df.empty:
-        # Calculate accuracy of historical predictions with known outcomes
-        evaluated_predictions = historical_predictions_df.dropna(subset=['Actual_Outcome'])
-        if not evaluated_predictions.empty:
-            historical_accuracy = accuracy_score(evaluated_predictions['Actual_Outcome'], evaluated_predictions['Predicted_Direction'])
-            st.write(f"Historical Prediction Accuracy (evaluated outcomes): {historical_accuracy:.2f}")
-
-        st.dataframe(historical_predictions_df.sort_index(ascending=False))
-    else:
-        st.write("No historical predictions found.")
-else:
-    st.write("No historical predictions file found.")
-
+# Display historical stock data and charts initially (even before button click, if data file exists)
 st.subheader("Historical Stock Data:")
 if os.path.exists(DATA_FILE):
     historical_data_display = pd.read_csv(DATA_FILE, index_col='Date', parse_dates=True)
@@ -268,4 +302,17 @@ if os.path.exists(DATA_FILE):
         st.write("No historical stock data available.")
 else:
      st.write("No historical stock data file found.")
+
+# Display historical predictions and outcomes initially (even before button click, if file exists)
+# This section is already present in the 'if st.button' block, let's move a version outside
+# so it's visible on initial load if the file exists.
+st.subheader("All Recorded Predictions and Outcomes:")
+if os.path.exists(PREDICTIONS_FILE):
+    all_predictions_df = pd.read_csv(PREDICTIONS_FILE, index_col='Date', parse_dates=True)
+    if not all_predictions_df.empty:
+        st.dataframe(all_predictions_df.sort_index(ascending=False))
+    else:
+        st.write("No recorded predictions found.")
+else:
+    st.write("No recorded predictions file found.")
 
