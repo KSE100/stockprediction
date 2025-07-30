@@ -12,8 +12,8 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 
 # --- Configuration ---
 STOCK_TICKER = "UBL"
-DATA_FILE = "data/KSE30 Data.csv"
-PREDICTIONS_FILE = "data/predictions.csv" # File to store historical predictions
+DATA_FILE = "KSE30 Data.csv" # Save in root directory
+PREDICTIONS_FILE = "predictions.csv" # Save in root directory
 
 # --- Helper Functions ---
 
@@ -88,10 +88,9 @@ def load_and_prepare_data(ticker, data_file):
         # Drop rows with NaN values introduced by lagging and rolling windows
         combined_data.dropna(inplace=True)
 
-        # Save updated data
-        os.makedirs(os.path.dirname(data_file), exist_ok=True)
-        combined_data.to_csv(data_file)
-        st.write(f"Updated data saved to {data_file}")
+        # Save updated data to the root directory
+        combined_data.to_csv(DATA_FILE)
+        st.write(f"Updated data saved to {DATA_FILE}")
 
         return combined_data
 
@@ -275,16 +274,20 @@ if st.button("Run Analysis and Get Prediction"):
 
             # Display historical predictions and outcomes (using the updated dataframe)
             st.subheader("Historical Predictions and Outcomes:")
-            if not historical_predictions_df.empty:
-                 # Calculate accuracy of historical predictions with known outcomes
-                evaluated_predictions = historical_predictions_df.dropna(subset=['Actual_Outcome'])
-                if not evaluated_predictions.empty:
-                    historical_accuracy = accuracy_score(evaluated_predictions['Actual_Outcome'], evaluated_predictions['Predicted_Direction'])
-                    st.write(f"Historical Prediction Accuracy (evaluated outcomes): {historical_accuracy:.2f}")
+            if os.path.exists(PREDICTIONS_FILE):
+                historical_predictions_df = pd.read_csv(PREDICTIONS_FILE, index_col='Date', parse_dates=True)
+                if not historical_predictions_df.empty:
+                     # Calculate accuracy of historical predictions with known outcomes
+                    evaluated_predictions = historical_predictions_df.dropna(subset=['Actual_Outcome'])
+                    if not evaluated_predictions.empty:
+                        historical_accuracy = accuracy_score(evaluated_predictions['Actual_Outcome'], evaluated_predictions['Predicted_Direction'])
+                        st.write(f"Historical Prediction Accuracy (evaluated outcomes): {historical_accuracy:.2f}")
 
-                st.dataframe(historical_predictions_df.sort_index(ascending=False))
+                    st.dataframe(historical_predictions_df.sort_index(ascending=False))
+                else:
+                    st.write("No historical predictions found.")
             else:
-                st.write("No historical predictions found.")
+                st.write("No historical predictions file found.")
 
 
     else:

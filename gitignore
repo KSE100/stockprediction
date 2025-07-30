@@ -1,0 +1,8 @@
+
+__pycache__/
+.env
+.streamlit/
+*.pkl
+# Exclude the CSV files from git tracking as they will be handled by the app
+KSE30 Data.csv
+predictions.csv
