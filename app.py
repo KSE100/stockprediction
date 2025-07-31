@@ -219,18 +219,21 @@ if st.button("Run Analysis and Get Prediction"):
 
 
             # Display model performance metrics for the PREVIOUS day in a table
-            # Correct the date label to reflect the previous day
-            st.subheader(f"Model Performance on Previous Day ({date_of_latest_data.date()}):")
-            if 'Price_Direction' in latest_day_data.columns and not latest_day_data.empty:
-                latest_actual_direction = latest_day_data['Price_Direction'].iloc[0]
-                latest_predicted_direction = model_classification.predict(X_latest)[0] # Predict again on the latest features
+            # Correct the date label to reflect the previous day's data date
+            if not latest_day_data.empty:
+                 previous_day_date = latest_day_data.index[0].date() # Get the date of the latest data point
+                 st.subheader(f"Model Performance on Previous Day ({previous_day_date}):")
 
-                performance_summary = {
-                    'Metric': ['Actual Direction', 'Predicted Direction', 'Accuracy'],
-                    'Value': [latest_actual_direction, latest_predicted_direction, f'{accuracy_score([latest_actual_direction], [latest_predicted_direction]):.2f}']
-                }
-                performance_df = pd.DataFrame(performance_summary)
-                st.dataframe(performance_df.set_index('Metric'))
+                 if 'Price_Direction' in latest_day_data.columns and not latest_day_data.empty:
+                    latest_actual_direction = latest_day_data['Price_Direction'].iloc[0]
+                    latest_predicted_direction = model_classification.predict(X_latest)[0] # Predict again on the latest features
+
+                    performance_summary = {
+                        'Metric': ['Actual Direction', 'Predicted Direction', 'Accuracy'],
+                        'Value': [latest_actual_direction, latest_predicted_direction, f'{accuracy_score([latest_actual_direction], [latest_predicted_direction]):.2f}']
+                    }
+                    performance_df = pd.DataFrame(performance_summary)
+                    st.dataframe(performance_df.set_index('Metric'))
 
             # Optionally display training accuracy
             # st.write(f"Accuracy on training data: {train_accuracy:.2f}") # Need to pass train_accuracy from train_classification_model
@@ -253,20 +256,25 @@ if not latest_day_data.empty:
     change = current_price - ldcp
     volume = latest_day_data['Volume'].iloc[0]
 
-    latest_day_summary = {
-        'Metric': ['LDCP', 'Open', 'High', 'Low', 'Current', 'Change', 'Volume'],
-        'Value': [ldcp, latest_day_data['Open'].iloc[0], latest_day_data['High'].iloc[0],
-                  latest_day_data['Low'].iloc[0], current_price, change, volume]
+    # Restructure the data for the table with metrics as columns
+    latest_day_summary_dict = {
+        'LDCP': [ldcp],
+        'Open': [latest_day_data['Open'].iloc[0]],
+        'High': [latest_day_data['High'].iloc[0]],
+        'Low': [latest_day_data['Low'].iloc[0]],
+        'Current': [current_price],
+        'Change': [change],
+        'Volume': [volume]
     }
-    latest_day_df = pd.DataFrame(latest_day_summary)
+    latest_day_df = pd.DataFrame(latest_day_summary_dict)
 
     # Format numerical columns
-    latest_day_df['Value'] = latest_day_df['Value'].apply(lambda x: f'{x:.2f}' if isinstance(x, (int, float)) else x)
-    # Format Volume differently if needed, e.g., without decimals or with commas
-    latest_day_df.loc[latest_day_df['Metric'] == 'Volume', 'Value'] = latest_day_df.loc[latest_day_df['Metric'] == 'Volume', 'Value'].apply(lambda x: f'{float(x):,.0f}')
+    for col in ['LDCP', 'Open', 'High', 'Low', 'Current', 'Change']:
+        latest_day_df[col] = latest_day_df[col].apply(lambda x: f'{x:.2f}')
+    latest_day_df['Volume'] = latest_day_df['Volume'].apply(lambda x: f'{float(x):,.0f}')
 
 
-    st.dataframe(latest_day_df.set_index('Metric'))
+    st.dataframe(latest_day_df) # Display the restructured dataframe
 
 else:
     st.write("No data available for the latest day.")
@@ -277,7 +285,10 @@ st.subheader("Historical Stock Data:")
 if not historical_data_processed.empty:
     st.line_chart(historical_data_processed['Close'])
     # Display historical data excluding the last day with specified columns, latest entries first
-    st.dataframe(historical_data_processed[['Open', 'High', 'Low', 'Close', 'Volume', 'MA_20', 'MA_50', 'RSI']].astype(float).applymap('{:.2f}'.format).sort_index(ascending=False))
+    # Remove time part from the index for display
+    historical_data_display = historical_data_processed[['Open', 'High', 'Low', 'Close', 'Volume', 'MA_20', 'MA_50', 'RSI']].copy()
+    historical_data_display.index = historical_data_display.index.date # Convert index to date objects for display
+    st.dataframe(historical_data_display.astype(float).applymap('{:.2f}'.format).sort_index(ascending=False))
 else:
     st.write("No sufficient historical stock data available to display.")
 
